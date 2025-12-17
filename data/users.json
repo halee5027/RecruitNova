@@ -1,0 +1,34 @@
+{
+  "addinshah5279@gmail.com": {
+    "name": "Addin Shah",
+    "email": "addinshah5279@gmail.com",
+    "phone": "+91 90888 40997",
+    "password": "38fdf149592a5e407850f66da1b359dd6245ad71436f6fd3aa8217a7c344e599",
+    "created_at": "2025-12-06T00:18:23.991762",
+    "mode": "user",
+    "admin_password": "d590427842def6200d0a274480e57ecf21d004d013d5121416a6ccd6ddb433d7",
+    "bio": "hi",
+    "updated_at": "2025-12-07T09:01:22.386142"
+  },
+  "noorshah5279@gmail.com": {
+    "name": "Noor Shah",
+    "email": "noorshah5279@gmail.com",
+    "phone": "+91 23344 44444",
+    "password": "91f4c736d64d81cb83ec286f5ae48af1f6d488593352c56a267d61f2a93308d6",
+    "created_at": "2025-12-07T09:15:56.986895",
+    "mode": "user",
+    "admin_password": null,
+    "bio": "",
+    "profile_setup_started": true,
+    "updated_at": "2025-12-07T09:17:38.568798"
+  },
+  "aksh.akshaya04@gmail.com": {
+    "name": "Akshaya",
+    "email": "aksh.akshaya04@gmail.com",
+    "phone": "9113997853",
+    "password": "cf332448230c29772c31da7440080fe84e89d3cc2c75c92436f7d85ce25495a6",
+    "created_at": "2025-12-08T14:03:31.929645",
+    "mode": "user",
+    "admin_password": "36f2be3d7e6a676307baa6069b42b26d888ea657dcd80d8ceee6aa47c4d84104"
+  }
+}

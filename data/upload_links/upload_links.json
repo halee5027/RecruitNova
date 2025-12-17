@@ -1,0 +1,45 @@
+{
+  "9cb5de0593a475efd7ec6bf57d6ed1c61ec79261f554f2222453be8e248d4176": {
+    "id": "e4b7f397-c8d8-486a-b695-27dda947d804",
+    "token_hash": "9cb5de0593a475efd7ec6bf57d6ed1c61ec79261f554f2222453be8e248d4176",
+    "recruiter_email": "addinshah5279@gmail.com",
+    "recruiter_name": "addin",
+    "company_name": "chumatech",
+    "job_title": "python developer",
+    "job_description": "Job description: \nObjectives of this role\nDesign, develop and maintain high-quality Java applications at the company.\nCollaborate with teams in other departments to identify and prioritise requirements.\nDevelop best practices for the company and participate in code reviews with the team and other stakeholders.\nConduct technical analysis to arrive at solutions and create technological artefacts in response to production issues.\nYour tasks\nA Bachelor\u2019s or Master\u2019s degree in software engineering, computer science, or a related field.\n3+ years of demonstrable experience in Java development.\nStrong knowledge of Java languages and web development frameworks like Spring, Hibernate, and Struts.\nExpertise in developing web applications using front-end technologies (HTML, CSS, and JavaScript).\nWorking knowledge of database technologies (MySQL and Oracle).\nRequired skills and qualifications\nDemonstrable expertise in various technical areas, including programming, network administration, and software installation and configuration.\n3+ years of experience in software development, database management, or a role with similar responsibilities.\nStrong analytical and problem-solving skills with organisational capabilities.\nExperience with IT project management methodologies, such as Agile or Scrum.\nFamiliarity with cloud technologies (AWS, Azure, or Google Cloud).\nPreferred skills and qualifications\nRelevant certifications such as Oracle Certified Professional (OCP).\nKnowledge of cloud computing technologies (AWS, Azure, or Google Cloud).\nFamiliarity with agile software development methodologies (Agile or Scrum).\nExperience with DevOps practices and tools (Git, Jenkins, and Docker).\nExcellent problem-solving and analytical skills with good teamwork capabilities.",
+    "created_at": "2025-12-11T21:33:26.909757",
+    "expires_at": "2026-01-21T21:33:26.909766",
+    "max_resumes": 30,
+    "resume_count": 0,
+    "resumes": [],
+    "required_fields": [
+      "email",
+      "phone",
+      "name"
+    ],
+    "active": true,
+    "uploads_folder": "data/upload_links/uploads/e4b7f397-c8d8-486a-b695-27dda947d804",
+    "required_years": 5
+  },
+  "2b573771eb5ae85c78a7379bf3ef6e954abf414e165cfd539e76e17ffadb4b20": {
+    "id": "314379ef-32ff-47a9-821f-9158cafbdbb9",
+    "token_hash": "2b573771eb5ae85c78a7379bf3ef6e954abf414e165cfd539e76e17ffadb4b20",
+    "recruiter_email": "add",
+    "recruiter_name": "add",
+    "company_name": "cc",
+    "job_title": "hh",
+    "job_description": "bhhhh",
+    "created_at": "2025-12-11T21:34:32.759763",
+    "expires_at": "2026-01-10T21:34:32.759774",
+    "max_resumes": null,
+    "resume_count": 0,
+    "resumes": [],
+    "required_fields": [
+      "email",
+      "phone",
+      "name"
+    ],
+    "active": true,
+    "uploads_folder": "data/upload_links/uploads/314379ef-32ff-47a9-821f-9158cafbdbb9"
+  }
+}

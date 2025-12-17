@@ -1,0 +1,1088 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import os
+import hashlib
+from datetime import datetime as dtime
+import time
+from io import BytesIO
+import tempfile
+import random
+from resume_fetcher import ResumeFetcher, FETCHED_RESUMES_DIR
+from resume_ui import show_fetch_and_screen_page
+
+
+# YOUR ORIGINAL IMPORTS
+from utils.extract import extract_text_from_file, extract_skills, match_job_skills
+from utils.experience import estimate_experience_years, experience_percentage, classify_experience_level
+from utils.ranking import calculate_final_score
+from utils.analyzer import analyze_resume
+
+# NEW FEATURES
+from ui_components import stat_boxes, metric_card, show_header_with_user
+
+REPORTS_DIR = "admin_reports"
+RESUMES_DIR = "stored_resumes"
+
+os.makedirs(REPORTS_DIR, exist_ok=True)
+os.makedirs(RESUMES_DIR, exist_ok=True)
+
+# Initialize session state for downloads
+if "bulk_download_data" not in st.session_state:
+    st.session_state.bulk_download_data = None
+if "bulk_download_filename" not in st.session_state:
+    st.session_state.bulk_download_filename = None
+if "auto_download_data" not in st.session_state:
+    st.session_state.auto_download_data = None
+if "auto_download_filename" not in st.session_state:
+    st.session_state.auto_download_filename = None
+
+# ==================== ATS SCORE CALCULATION ====================
+def calculate_ats_score(resume_text, job_desc):
+    """
+    Calculate ATS (Applicant Tracking System) score
+    ATS evaluates resume format, keywords, and structure
+    """
+    ats_score = 0
+    ats_details = {
+        "format_score": 0,
+        "keyword_score": 0,
+        "structure_score": 0,
+        "content_score": 0,
+        "issues": []
+    }
+    
+    # 1. FORMAT SCORE (25 points max)
+    format_score = 0
+    if len(resume_text) < 500:
+        ats_details["issues"].append("❗️ Resume too short (ATS may not parse)")
+    else:
+        format_score += 10
+    
+    if '\n' in resume_text and len(resume_text.split('\n')) > 20:
+        format_score += 10
+    else:
+        ats_details["issues"].append("❗️ Poor formatting/structure")
+    
+    if not any(char in resume_text for char in ['@', '.']):
+        ats_details["issues"].append("❗️ No contact information found")
+    else:
+        format_score += 5
+    
+    ats_details["format_score"] = format_score
+    ats_score += format_score
+    
+    # 2. KEYWORD SCORE (35 points max)
+    keyword_score = 0
+    resume_lower = resume_text.lower()
+    jd_lower = job_desc.lower()
+    
+    # Extract keywords from JD
+    jd_keywords = set(jd_lower.split())
+    jd_keywords = {kw for kw in jd_keywords if len(kw) > 3}  # Only words > 3 chars
+    
+    # Count matching keywords
+    matching_keywords = 0
+    for keyword in jd_keywords:
+        if keyword in resume_lower:
+            matching_keywords += 1
+    
+    if jd_keywords:
+        keyword_match_percent = (matching_keywords / len(jd_keywords)) * 100
+        keyword_score = min(35, int(keyword_match_percent * 0.35))  # Max 35 points
+    else:
+        keyword_score = 20
+    
+    if matching_keywords == 0:
+        ats_details["issues"].append("❗️ Very few keywords match job description")
+    
+    ats_details["keyword_score"] = keyword_score
+    ats_score += keyword_score
+    
+    # 3. STRUCTURE SCORE (20 points max)
+    structure_score = 0
+    sections = ["experience", "education", "skill", "project", "summary"]
+    found_sections = sum(1 for section in sections if section in resume_lower)
+    
+    structure_score = min(20, found_sections * 4)
+    
+    if found_sections < 2:
+        ats_details["issues"].append("âš ï¸ Missing important sections (Experience/Education)")
+    
+    ats_details["structure_score"] = structure_score
+    ats_score += structure_score
+    
+    # 4. CONTENT SCORE (20 points max)
+    content_score = 0
+    
+    # Check for numbers/metrics (indicates quantified achievements)
+    if any(char.isdigit() for char in resume_text):
+        content_score += 7
+    else:
+        ats_details["issues"].append("âš ï¸ No quantified achievements/metrics")
+    
+    # Check for action verbs
+    action_verbs = ["developed", "managed", "led", "created", "implemented", "designed", 
+                    "achieved", "increased", "improved", "reduced", "built"]
+    action_count = sum(1 for verb in action_verbs if verb in resume_lower)
+    content_score += min(8, action_count)
+    
+    # Check for relevant experience keywords
+    if "year" in resume_lower or "month" in resume_lower:
+        content_score += 5
+    else:
+        ats_details["issues"].append("❗️ Duration of experience not clearly mentioned")
+    
+    ats_details["content_score"] = content_score
+    ats_score += content_score
+    
+    # Final ATS Score (0-100)
+    ats_score = min(100, ats_score)
+    
+    # Determine ATS Rating
+    if ats_score >= 80:
+        ats_rating = "👏 Excellent"
+    elif ats_score >= 60:
+        ats_rating = "👌 Good"
+    elif ats_score >= 40:
+        ats_rating = "👍🏻  Fair"
+    else:
+        ats_rating = "👎🏻 Poor"
+    
+    return {
+        "ats_score": round(ats_score, 2),
+        "ats_rating": ats_rating,
+        "format_score": format_score,
+        "keyword_score": keyword_score,
+        "structure_score": structure_score,
+        "content_score": content_score,
+        "issues": ats_details["issues"]
+    }
+
+
+def get_file_hash(file_content):
+    """Get hash of file for duplicate detection"""
+    return hashlib.md5(file_content).hexdigest()
+
+def detect_duplicates(resumes_data):
+    """Detect duplicate resumes"""
+    hashes = {}
+    duplicates = []
+    
+    for idx, resume in enumerate(resumes_data):
+        file_hash = resume.get("hash")
+        if file_hash in hashes:
+            duplicates.append((idx, hashes[file_hash]))
+            resume["is_duplicate"] = True
+        else:
+            hashes[file_hash] = idx
+            resume["is_duplicate"] = False
+    
+    return resumes_data
+
+def extract_contact_from_resume(resume_text):
+    """Extract email and contact from resume"""
+    import re
+    
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    phone_pattern = r'(\+\d{1,3}[-.\\s]?)?\d{3}[-.\\s]?\d{3}[-.\\s]?\d{4}'
+    
+    email = re.search(email_pattern, resume_text)
+    phone = re.search(phone_pattern, resume_text)
+    
+    return {
+        "email": email.group(0) if email else "Not provided",
+        "contact": phone.group(0) if phone else "Not provided"
+    }
+
+def screen_single_resume(job_desc, resume_file):
+    """Screen a single resume against JD - USES YOUR ORIGINAL LOGIC + ATS"""
+    try:
+        resume_text = extract_text_from_file(resume_file)
+        skills = extract_skills(resume_text)
+        exp_years = estimate_experience_years(resume_text)
+        skill_match = match_job_skills(skills, job_desc)
+        exp_match = experience_percentage(exp_years, 3)
+        final_score = calculate_final_score(skill_match, exp_match)
+        exp_label = classify_experience_level(exp_years)
+        analysis = analyze_resume(resume_text, job_desc)
+        contact_info = extract_contact_from_resume(resume_text)
+        
+        # NEW: Calculate ATS Score
+        ats_data = calculate_ats_score(resume_text, job_desc)
+        
+        return {
+            "status": "success",
+            "text": resume_text,
+            "skills": skills,
+            "exp_years": exp_years,
+            "skill_match": skill_match,
+            "exp_match": exp_match,
+            "final_score": final_score,
+            "exp_label": exp_label,
+            "analysis": analysis,
+            "email": contact_info["email"],
+            "contact": contact_info["contact"],
+            "ats_score": ats_data["ats_score"],
+            "ats_rating": ats_data["ats_rating"],
+            "ats_details": ats_data
+        }
+    
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def screen_bulk_resumes(job_desc, resume_files):
+    """Screen multiple resumes and return ranked results"""
+    results = []
+    
+    for resume_file in resume_files:
+        result = screen_single_resume(job_desc, resume_file)
+        
+        if result["status"] == "success":
+            score = result["final_score"]
+            
+            if score >= 75:
+                fit = "Strongly Fit"
+            elif score >= 50:
+                fit = "Mid Fit"
+            else:
+                fit = "Low Fit"
+            
+            file_content = resume_file.read()
+            file_hash = get_file_hash(file_content)
+            resume_file.seek(0)
+            
+            results.append({
+                "candidate_name": resume_file.name.replace('.pdf', '').replace('.docx', '').replace('.txt', ''),
+                "email": result.get("email", "Not provided"),
+                "contact": result.get("contact", "Not provided"),
+                "skills": ", ".join(result["skills"][:5]),
+                "experience_level": result["exp_label"],
+                "skill_match": round(result["skill_match"], 2),
+                "exp_match": round(result["exp_match"], 2),
+                "overall_score": round(result["final_score"], 2),
+                "ats_score": result.get("ats_score", 0),
+                "ats_rating": result.get("ats_rating", "N/A"),
+                "fit": fit,
+                "hash": file_hash,
+                "resume_path": None,
+                "file_content": file_content,
+                "original_filename": resume_file.name,
+                "ats_details": result.get("ats_details", {})
+            })
+    
+    results.sort(key=lambda x: x["overall_score"], reverse=True)
+    return detect_duplicates(results)
+
+def screen_with_jd(job_desc, resume_folder_path=None):
+    """Auto-screen all resumes against JD without manual upload"""
+    results = []
+    
+    if not resume_folder_path or not os.path.exists(resume_folder_path):
+        return {"status": "error", "message": "Invalid folder path"}
+    
+    supported_formats = ('.pdf', '.docx', '.txt')
+    
+    for filename in os.listdir(resume_folder_path):
+        if filename.lower().endswith(supported_formats):
+            filepath = os.path.join(resume_folder_path, filename)
+            
+            try:
+                with open(filepath, 'rb') as f:
+                    resume_text = extract_text_from_file(f)
+                
+                skills = extract_skills(resume_text)
+                exp_years = estimate_experience_years(resume_text)
+                skill_match = match_job_skills(skills, job_desc)
+                exp_match = experience_percentage(exp_years, 3)
+                final_score = calculate_final_score(skill_match, exp_match)
+                exp_label = classify_experience_level(exp_years)
+                contact_info = extract_contact_from_resume(resume_text)
+                
+                # NEW: Calculate ATS Score
+                ats_data = calculate_ats_score(resume_text, job_desc)
+                
+                if final_score >= 75:
+                    fit = "Strongly Fit"
+                elif final_score >= 50:
+                    fit = "Mid Fit"
+                else:
+                    fit = "Low Fit"
+                
+                file_content = open(filepath, 'rb').read()
+                file_hash = get_file_hash(file_content)
+                
+                results.append({
+                    "candidate_name": filename.replace('.pdf', '').replace('.docx', '').replace('.txt', ''),
+                    "email": contact_info.get("email", "Not provided"),
+                    "contact": contact_info.get("contact", "Not provided"),
+                    "skills": ", ".join(skills[:5]) if skills else "None",
+                    "experience_level": exp_label,
+                    "skill_match": round(skill_match, 2),
+                    "exp_match": round(exp_match, 2),
+                    "overall_score": round(final_score, 2),
+                    "ats_score": ats_data["ats_score"],
+                    "ats_rating": ats_data["ats_rating"],
+                    "fit": fit,
+                    "hash": file_hash,
+                    "resume_path": filepath,
+                    "file_content": file_content,
+                    "original_filename": filename,
+                    "ats_details": ats_data
+                })
+            
+            except Exception as e:
+                st.warning(f"Error processing {filename}: {str(e)}")
+    
+    results.sort(key=lambda x: x["overall_score"], reverse=True)
+    return {"status": "success", "results": detect_duplicates(results)}
+
+def save_bulk_report(results, job_desc, mode="bulk"):
+    """Save bulk screening results to Excel - ENHANCED with validation"""
+    try:
+        # Prepare data
+        export_results = []
+        
+        for r in results:
+            export_results.append({
+                "Rank": results.index(r) + 1,
+                "Candidate Name": r.get("candidate_name", ""),
+                "Email": r.get("email", ""),
+                "Contact": r.get("contact", ""),
+                "Experience Level": r.get("experience_level", ""),
+                "Skill Match %": r.get("skill_match", 0),
+                "Experience Match %": r.get("exp_match", 0),
+                "Overall Score": r.get("overall_score", 0),
+                "ATS Score": r.get("ats_score", 0),
+                "ATS Rating": r.get("ats_rating", ""),
+                "Fit Level": r.get("fit", ""),
+                "Is Duplicate": "Yes" if r.get("is_duplicate") else "No"
+            })
+        
+        df = pd.DataFrame(export_results)
+        
+        # Create temporary file (more reliable than BytesIO)
+        with tempfile.NamedTemporaryFile(mode='wb', suffix='.xlsx', delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        try:
+            # Write to temporary file
+            with pd.ExcelWriter(tmp_path, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Screening Results')
+                
+                # Auto-adjust column widths
+                worksheet = writer.sheets['Screening Results']
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(cell.value)
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+            # Read from temporary file
+            with open(tmp_path, 'rb') as f:
+                excel_bytes = f.read()
+            
+            # Validate file size
+            if len(excel_bytes) == 0:
+                return None, "❗️ Generated file is empty - validation failed", None
+            
+            # Save permanent copy
+            timestamp = dtime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"screening_report_{mode}_{timestamp}.xlsx"
+            filepath = os.path.join(REPORTS_DIR, filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(excel_bytes)
+            
+            # Verify file was saved
+            if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+                return None, "❗️ Failed to save file to disk", None
+            
+            return excel_bytes, "✅ Report generated successfully", filename
+        
+        finally:
+            # Clean up temporary file
+            try:
+                os.remove(tmp_path)
+            except:
+                pass
+    
+    except Exception as e:
+        return None, f"❗️ Error generating report: {str(e)}", None
+
+def get_admin_statistics():
+    """Get admin statistics"""
+    try:
+        total_reports = len([f for f in os.listdir(REPORTS_DIR) if f.endswith(('.csv', '.xlsx'))])
+        total_resumes = len([f for f in os.listdir(RESUMES_DIR)])
+        
+        fit_counts = {"Strongly Fit": 0, "Mid Fit": 0, "Low Fit": 0}
+        
+        for report_file in os.listdir(REPORTS_DIR):
+            if report_file.endswith('.xlsx'):
+                filepath = os.path.join(REPORTS_DIR, report_file)
+                df = pd.read_excel(filepath)
+                fit_counts["Strongly Fit"] += len(df[df['Fit Level'] == 'Strongly Fit'])
+                fit_counts["Mid Fit"] += len(df[df['Fit Level'] == 'Mid Fit'])
+                fit_counts["Low Fit"] += len(df[df['Fit Level'] == 'Low Fit'])
+        
+        return {
+            "total_reports": total_reports,
+            "total_resumes": total_resumes,
+            "fit_distribution": fit_counts
+        }
+    
+    except:
+        return {"total_reports": 0, "total_resumes": 0, "fit_distribution": {}}
+
+def show_admin_dashboard():
+    """Main admin dashboard - PRESERVES YOUR ORIGINAL LOGIC + NEW FEATURES"""
+    show_header_with_user()
+    st.markdown("---")
+    
+    with st.sidebar:
+        st.title("🧑🏻‍💻 Recruiter Dashboard")
+        st.markdown("<hr style='margin: 4px 0;'>", unsafe_allow_html=True)
+        admin_page = st.radio(
+            "Select Option",
+            [
+                "🔗 Fetch & Auto-Screen Resumes",
+                "Single Resume Screening",
+                "Bulk Resume Screening",
+                "JD-Driven Auto Screening",
+                "Statistics",
+                "Stored Resumes"
+            ]
+            
+
+        )
+    if admin_page == "🔗 Fetch & Auto-Screen Resumes":
+        show_fetch_and_screen_page()
+    elif admin_page == "Single Resume Screening":
+        show_single_screening()
+    elif admin_page == "Bulk Resume Screening":
+        show_bulk_screening()
+    elif admin_page == "JD-Driven Auto Screening":
+        show_jd_auto_screening()
+    elif admin_page == "Statistics":
+        show_admin_statistics_page()
+    elif admin_page == "Stored Resumes":
+        show_stored_resumes()
+
+
+def clear_keys_and_rerun(keys):
+    """Delete only the given session_state keys and rerun."""
+    for k in keys:
+        if k in st.session_state:
+            del st.session_state[k]
+    st.rerun()
+
+
+
+def show_single_screening():
+    """Single resume screening - YOUR ORIGINAL LOGIC + ATS"""
+    st.markdown("## 📝 Single Resume Screening")
+    st.markdown("---")
+
+    col1, col2 = st.columns([1.5, 1])
+
+    with col1:
+        st.subheader(" Job Description")
+        job_desc = st.text_area(
+            "Paste job requirements:",
+            height=150,
+            placeholder="Python, SQL, AWS, 3+ years experience, Machine Learning...",
+           
+        )
+    
+    with col2:
+        st.subheader("📑 Resume Upload")
+        resume_file = st.file_uploader(
+            "Upload Resume (PDF/DOCX/TXT):",
+            type=['pdf', 'docx', 'txt'],
+           
+        )
+
+   
+    if st.button(" 🚀 Analyze Resume", type="primary", use_container_width=True):
+         if not job_desc.strip():
+            st.error("❌ Please enter job description")
+         elif not resume_file:
+            st.error("❌ Please upload a resume")
+         else:
+            with st.spinner("Analyzing resume..."):
+                result = screen_single_resume(job_desc, resume_file)
+                
+                if result["status"] == "success":
+                    st.success("✔️ Analysis complete!")
+                    
+                    # Main Scores Row
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        metric_card("Skill Match", f"{result['skill_match']:.1f}%", "💪", "#6366f1")
+                    with col2:
+                        metric_card("Experience Match", f"{result['exp_match']:.1f}%", "📈", "#ec4899")
+                    with col3:
+                        metric_card("Overall Score", f"{result['final_score']:.1f}%", "🎯", "#10b981")
+                    with col4:
+                        metric_card("ATS Score", f"{result['ats_score']:.1f}%", "🤖", "#f59e0b")
+                    
+                    st.markdown("---")
+                    
+                    # ATS Details Section
+                    st.subheader("🦾 ATS Analysis")
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    
+                    with col1:
+                        st.metric("Format", f"{result['ats_details']['format_score']}", "")
+                    with col2:
+                        st.metric("Keywords", f"{result['ats_details']['keyword_score']}", "")
+                    with col3:
+                        st.metric("Structure", f"{result['ats_details']['structure_score']}", "")
+                    with col4:
+                        st.metric("Content", f"{result['ats_details']['content_score']}", "")
+                    with col5:
+                        st.metric("ATS Rating", result['ats_rating'], "")
+                    
+                    # ATS Issues
+                    if result['ats_details']['issues']:
+                        st.subheader("‼ ATS Issues Found")
+                        for issue in result['ats_details']['issues']:
+                            st.write(issue)
+                    else:
+                        st.success("☑️ No ATS issues found!")
+                    
+                    st.markdown("---")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.subheader("✅ Matched Skills")
+                        analysis = result['analysis']
+                        matched = analysis.get("matched_skills", [])
+                        if matched:
+                            for skill in matched[:10]:
+                                st.write(f"⚪️ {skill}")
+                        else:
+                            st.info("No skills matched")
+                    
+                    with col2:
+                        st.subheader("❌ Missing Skills")
+                        missing = analysis.get("missing_skills", [])
+                        if missing:
+                            for skill in missing[:10]:
+                                st.write(f"🔴 {skill}")
+                        else:
+                            st.success("All required skills present!")
+                    
+                    st.markdown("---")
+                    
+                    st.subheader("📊 Summary")
+                    st.write(analysis.get("summary", "No summary"))
+                    
+                    st.markdown("---")
+                    
+                    st.subheader("📑 Resume Preview")
+                    st.text_area("Resume Text", value=result['text'][:2000], height=200, disabled=True)
+                
+                else:
+                    st.error(f"⚠️ Error: {result['message']}")
+
+def show_bulk_screening():
+    """Bulk resume screening (fixed: persistent uploads + stable report generation)"""
+    st.markdown("## 📑 Bulk Resume Screening")
+    st.markdown("---")
+
+    # Ensure session state keys exist
+    if "bulk_uploaded_files" not in st.session_state:
+        st.session_state.bulk_uploaded_files = []  # list of dicts: {"name":..., "content": bytes}
+    if "bulk_results" not in st.session_state:
+        st.session_state.bulk_results = None
+    if "bulk_jd_text" not in st.session_state:
+        st.session_state.bulk_jd_text = ""
+
+    col1, col2 = st.columns([1.5, 1])
+
+    # LEFT: Job description (persisted)
+    with col1:
+        st.subheader("📝 Job Description")
+        # use session state to persist JD between reruns
+        jd = st.text_area(
+            "Paste job requirements:",
+            height=150,
+            placeholder="Python, SQL, AWS, 3+ years experience...",
+            key="bulk_jd"
+        )
+        # keep a copy in a simple session var for use outside widget checks
+        st.session_state.bulk_jd_text = jd
+
+    # RIGHT: Uploader (upload adds to session state list)
+    with col2:
+        st.subheader("📑 Upload Resumes")
+        uploaded = st.file_uploader(
+            "Upload multiple resumes (PDF/DOCX/TXT):",
+            type=['pdf', 'docx', 'txt'],
+            accept_multiple_files=True,
+            key="bulk_uploader_widget"
+        )
+
+        # If new files are uploaded via the widget, store their bytes+name into session state
+        if uploaded:
+            # maintain uniqueness by filename+size to avoid duplicates in session list
+            existing_keys = {f"{f['name']}|{len(f['content'])}" for f in st.session_state.bulk_uploaded_files}
+            added = 0
+            for up in uploaded:
+                try:
+                    up_bytes = up.read()
+                    key = f"{up.name}|{len(up_bytes)}"
+                    if key not in existing_keys:
+                        st.session_state.bulk_uploaded_files.append({"name": up.name, "content": up_bytes})
+                        existing_keys.add(key)
+                        added += 1
+                except Exception as e:
+                    st.warning(f"Failed to read {up.name}: {e}")
+            if added:
+                st.success(f"Added {added} file(s) to upload list (stored in session).")
+
+       
+        else:
+            st.info("No files uploaded yet. Use the uploader above to add resumes (they will persist).")
+
+    st.markdown("---")
+
+    # Action buttons: Screen and (separately) Generate Report
+    actions_col1, actions_col2, actions_col3 = st.columns([1, 1, 1])
+
+    with actions_col1:
+        if st.button("🚀 Screen All Resumes", type="primary", use_container_width=True):
+            job_desc = st.session_state.bulk_jd_text or ""
+            if not job_desc.strip():
+                st.error("❌ Please enter job description before screening")
+            elif not st.session_state.bulk_uploaded_files:
+                st.error("❌ Please upload resumes before screening")
+            else:
+                # Recreate file-like objects for screen_bulk_resumes
+                from io import BytesIO
+                temp_files = []
+                for f in st.session_state.bulk_uploaded_files:
+                    bio = BytesIO(f["content"])
+                    bio.name = f["name"]
+                    bio.seek(0)
+                    temp_files.append(bio)
+
+                with st.spinner(f"Screening {len(temp_files)} resumes..."):
+                    try:
+                        results = screen_bulk_resumes(job_desc, temp_files)
+                        # save results in session state for later report generation/download
+                        st.session_state.bulk_results = results
+                        st.success(f"✅ Screened {len(results)} resumes!")
+                    except Exception as e:
+                        st.error(f"⚠️ Error during screening: {e}")
+
+    # Show summary + table if results exist in session
+    if st.session_state.bulk_results:
+        results = st.session_state.bulk_results
+
+        st.markdown("---")
+        colA, colB, colC, colD = st.columns(4)
+        with colA:
+            st.metric("Total Resumes", len(results))
+        with colB:
+            st.metric("Strongly Fit", len([r for r in results if r["fit"] == "Strongly Fit"]))
+        with colC:
+            st.metric("Mid Fit", len([r for r in results if r["fit"] == "Mid Fit"]))
+        with colD:
+            st.metric("Low Fit", len([r for r in results if r["fit"] == "Low Fit"]))
+
+        st.markdown("---")
+        st.subheader("🥇🥈🥉 Top 3 Candidates")
+        top_3 = results[:3]
+        for idx, candidate in enumerate(top_3, 1):
+            with st.container():
+                c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
+                with c1:
+                    st.write(f"**#{idx} {candidate['candidate_name']}**")
+                with c2:
+                    st.write(f"📧 {candidate['email']}")
+                with c3:
+                    st.write(f"📞 {candidate['contact']}")
+                with c4:
+                    st.write(f"**Score: {candidate['overall_score']}%** | **ATS: {candidate['ats_score']}%** ({candidate['fit']})")
+                with c5:
+                    if candidate.get('file_content'):
+                        st.download_button(
+                            "⬇️ ",
+                            candidate['file_content'],
+                            file_name=candidate['original_filename'],
+                            key=f"download_top_{idx}"
+                        )
+            st.divider()
+
+        st.markdown("---")
+        st.subheader("📶 All Ranking Results")
+        df = pd.DataFrame(results)
+        display_df = df[["candidate_name", "email", "contact", "experience_level", "skill_match", "exp_match", "overall_score", "ats_score", "fit"]].copy()
+        display_df.insert(0, "Rank", range(1, len(display_df) + 1))
+        display_df = display_df.rename(columns={
+            "candidate_name": "Candidate",
+            "email": "Email",
+            "contact": "Contact",
+            "experience_level": "Experience",
+            "skill_match": "Skill %",
+            "exp_match": "Exp %",
+            "overall_score": "Overall Score",
+            "ats_score": "ATS Score",
+            "fit": "Fit Level"
+        })
+        st.dataframe(display_df, use_container_width=True)
+
+        # Pie chart for fit distribution (safe fallback if no results)
+        try:
+            fit_counts = pd.Series({
+                "Strongly Fit": len([r for r in results if r["fit"] == "Strongly Fit"]),
+                "Mid Fit": len([r for r in results if r["fit"] == "Mid Fit"]),
+                "Low Fit": len([r for r in results if r["fit"] == "Low Fit"])
+            })
+            fig = px.pie(
+                values=fit_counts.values,
+                names=fit_counts.index,
+                title="Candidate Fit Distribution",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception:
+            pass
+
+        st.markdown("---")
+
+        # GENERATE / DOWNLOAD REPORT: this is separate from the screening button
+        gen_col1, gen_col2 = st.columns([1, 1])
+
+        with gen_col1:
+            if st.button("📄 Generate Excel Report", key="bulk_save_btn", use_container_width=True):
+                try:
+                    excel_bytes, message, filename = save_bulk_report(results, st.session_state.bulk_jd_text or "", "bulk")
+                    if excel_bytes:
+                        # store for download
+                        st.session_state.bulk_download_data = excel_bytes
+                        st.session_state.bulk_download_filename = filename
+                        st.success(message)
+                    else:
+                        st.error(message)
+                except Exception as e:
+                    st.error(f"âŒ Error creating report: {e}")
+
+        with gen_col2:
+            if st.session_state.get("bulk_download_data"):
+                st.download_button(
+                    "⬇️ Download Excel Report",
+                    st.session_state.bulk_download_data,
+                    file_name=st.session_state.bulk_download_filename or "screening_report.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="bulk_report_download",
+                    use_container_width=True
+                )
+    else:
+        st.info("No screening results yet. Click **Screen All Resumes** to start.")
+
+
+def show_jd_auto_screening():
+    """JD-Driven auto screening"""
+    st.markdown("## 📃 JD-Driven Auto Screening")
+    st.info("🔄 Automatically screens all resumes in a folder against the JD")
+    st.markdown("---")
+
+    # ---------------------------
+    # Session state initialization
+    # ---------------------------
+    if "auto_results" not in st.session_state:
+        st.session_state.auto_results = None
+    if "auto_download_data" not in st.session_state:
+        st.session_state.auto_download_data = None
+    if "auto_download_filename" not in st.session_state:
+        st.session_state.auto_download_filename = None
+
+    col1, col2 = st.columns([1.5, 1])
+
+    with col1:
+        st.subheader("📝 Job Description")
+        job_desc = st.text_area(
+            "Paste job requirements:",
+            height=150,
+            placeholder="Python, SQL, AWS, 3+ years experience...",
+            key="auto_jd"
+        )
+
+    with col2:
+        st.subheader("🗂️ Folder Path")
+        folder_path = st.text_input(
+            "Enter folder path with resumes:",
+            placeholder="/path/to/resumes/folder"
+        )
+
+    # ---------------------------
+    # Auto-screen button
+    # ---------------------------
+    if st.button("🚀 Auto-Screen Folder", type="primary", use_container_width=True):
+        if not job_desc.strip():
+            st.error("❌ Please enter job description")
+            return
+
+        if not folder_path.strip():
+            st.error("❌ Please enter folder path")
+            return
+
+        with st.spinner("Auto-screening resumes..."):
+            response = screen_with_jd(job_desc, folder_path)
+
+        if response["status"] != "success":
+            st.error(f"⚠️ Error: {response['message']}")
+            return
+
+        # Save results to session state
+        st.session_state.auto_results = response["results"]
+        st.session_state.auto_download_data = None   # Clear previous download
+        st.session_state.auto_download_filename = None
+
+        st.success(f"✅ Auto-screened {len(st.session_state.auto_results)} resumes!")
+
+    # ------------------------------------------------
+    # SHOW RESULTS ONLY IF AUTO-SCREENING WAS COMPLETED
+    # ------------------------------------------------
+    if st.session_state.auto_results:
+        results = st.session_state.auto_results
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Total Resumes", len(results))
+        with col2:
+            st.metric("Strongly Fit", len([r for r in results if r["fit"] == "Strongly Fit"]))
+        with col3:
+            st.metric("Mid Fit", len([r for r in results if r["fit"] == "Mid Fit"]))
+        with col4:
+            st.metric("Low Fit", len([r for r in results if r["fit"] == "Low Fit"]))
+
+        st.markdown("---")
+
+        # ---------------------------
+        # Top 3 candidates section
+        # ---------------------------
+        st.subheader("🥇🥈🥉 Top 3 Candidates")
+        top_3 = results[:3]
+
+        for idx, candidate in enumerate(top_3, 1):
+            with st.container():
+                c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1])
+
+                with c1:
+                    st.write(f"**#{idx} {candidate['candidate_name']}**")
+                with c2:
+                    st.write(f"📧 {candidate['email']}")
+                with c3:
+                    st.write(f"📞 {candidate['contact']}")
+                with c4:
+                    st.write(
+                        f"**Score: {candidate['overall_score']}%** | "
+                        f"**ATS: {candidate['ats_score']}%** ({candidate['fit']})"
+                    )
+                with c5:
+                    if candidate.get("file_content"):
+                        st.download_button(
+                            "⬇️",
+                            candidate["file_content"],
+                            file_name=candidate["original_filename"],
+                            key=f"auto_download_{idx}"
+                        )
+
+            st.divider()
+
+        st.markdown("---")
+
+        # ---------------------------
+        # Full Data Table
+        # ---------------------------
+        st.subheader("👤 All Candidates")
+
+        df = pd.DataFrame(results)
+        display_df = df[[
+            "candidate_name", "email", "contact", 
+            "experience_level", "skill_match", "exp_match",
+            "overall_score", "ats_score", "fit"
+        ]].copy()
+
+        display_df.insert(0, "Rank", range(1, len(display_df) + 1))
+        display_df = display_df.rename(columns={
+            "candidate_name": "Candidate",
+            "email": "Email",
+            "contact": "Contact",
+            "experience_level": "Experience",
+            "skill_match": "Skill %",
+            "exp_match": "Exp %",
+            "overall_score": "Overall Score",
+            "ats_score": "ATS Score",
+            "fit": "Fit Level"
+        })
+
+        st.dataframe(display_df, use_container_width=True)
+
+        st.markdown("---")
+
+        # ---------------------------
+        # Report generator
+        # ---------------------------
+        c1, c2 = st.columns([1, 1])
+
+        with c1:
+            if st.button("📃 Generate Excel Report", key="auto_save_btn", use_container_width=True):
+                excel_bytes, message, filename = save_bulk_report(results, job_desc, "auto")
+
+                if excel_bytes:
+                    st.session_state.auto_download_data = excel_bytes
+                    st.session_state.auto_download_filename = filename
+                    st.success(message)
+                else:
+                    st.error(message)
+
+        with c2:
+            if st.session_state.auto_download_data:
+                st.download_button(
+                    "⬇️ Download Excel Report",
+                    st.session_state.auto_download_data,
+                    file_name=st.session_state.auto_download_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="auto_report_download",
+                    use_container_width=True
+                )
+
+STATS_PATH = "stats.json"  # same file you are already using
+
+def reset_admin_statistics():
+    if os.path.exists(STATS_PATH):
+        os.remove(STATS_PATH)
+
+    # 2) Delete all generated reports (this is what total reports counts)
+    if os.path.exists(REPORTS_DIR):
+        for f in os.listdir(REPORTS_DIR):
+            if f.lower().endswith((".csv", ".xlsx")):
+                try:
+                    os.remove(os.path.join(REPORTS_DIR, f))
+                except Exception:
+                    pass
+
+    # 3) Optionally also clear stored resumes if you want Total Resumes to go to 0
+    if os.path.exists(RESUMES_DIR):
+        for f in os.listdir(RESUMES_DIR):
+            if f.lower().endswith((".pdf", ".docx", ".txt")):
+                try:
+                    os.remove(os.path.join(RESUMES_DIR, f))
+                except Exception:
+                    pass
+
+    # 4) Clear cached results in memory
+    for key in [
+        "bulkresults",
+        "autoresults",
+        "bulkdownloaddata",
+        "autodownloaddata",
+        "bulkdownloadfilename",
+        "autodownloadfilename",
+    ]:
+        if key in st.session_state:
+            del st.session_state[key]
+
+def show_admin_statistics_page():
+    """Show admin statistics"""
+    st.markdown("## 📈📉 Statistics & Analytics")
+    st.markdown("---")
+    
+    stats = get_admin_statistics()
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        metric_card("Total Reports", stats.get("total_reports", 0), "📑", "#6366f1")
+    with col2:
+        metric_card("Total Resumes Stored", stats.get("total_resumes", 0), "🗂️", "#ec4899")
+    with col3:
+        metric_card("Total Screened", sum(stats.get("fit_distribution", {}).values()), "🔄", "#10b981")
+    
+    st.markdown("---")
+    with st.expander("Reset statistics", expanded=False):
+        st.info("This will clear counters and cached statistics. It will not delete stored reports or resumes.")
+        confirm = st.checkbox("I understand and want to reset all statistics")
+        if st.button("Reset statistics now", type="primary", use_container_width=True, disabled=not confirm):
+            reset_admin_statistics()
+            st.success("Statistics have been reset.")
+            st.rerun()
+    fit_dist = stats.get("fit_distribution", {})
+    
+    if fit_dist and any(fit_dist.values()):
+        fig = px.pie(
+            values=fit_dist.values(),
+            names=fit_dist.keys(),
+            title="Overall Candidate Fit Distribution",
+            color_discrete_map={
+                "Strongly Fit": "#10b981",
+                "Mid Fit": "#f59e0b",
+                "Low Fit": "#ef4444"
+            }
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    else:
+        st.info(" No screening data available yet")
+
+def show_stored_resumes():
+    """Show stored resumes"""
+    st.markdown("## 📁 Stored Resumes")
+    st.markdown("---")
+    st.info("Resumes are only saved when you manually click **Save Report**. No automatic saving.")
+
+    if not os.path.exists(RESUMES_DIR):
+        st.warning("Resumes directory not found.")
+        return
+
+    resumes = [f for f in os.listdir(RESUMES_DIR) if f.lower().endswith((".pdf", ".docx", ".txt"))]
+
+    if not resumes:
+        st.info("No resumes stored yet.")
+        return
+
+    st.success(f"Found {len(resumes)} stored resumes")
+
+    for idx, resume in enumerate(resumes):
+        filepath = os.path.join(RESUMES_DIR, resume)
+        col1, col2, col3 = st.columns([4, 2, 2])
+
+        with col1:
+            st.write(resume)
+
+        with col2:
+            with open(filepath, "rb") as f:
+                st.download_button(
+                    "Download",
+                    f,
+                    file_name=resume,
+                    key=f"stored_download_{idx}",
+                    use_container_width=True,
+                )
+
+        with col3:
+            if st.button("Delete", key=f"stored_delete_{idx}", use_container_width=True):
+                try:
+                    os.remove(filepath)
+                    st.success(f"Deleted {resume}")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"Error deleting {resume}: {e}")
+
+    
+    
