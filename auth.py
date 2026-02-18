@@ -83,12 +83,41 @@ def register_user(name, email, phone, password):
         "phone": phone,
         "password": hash_password(password),
         "created_at": datetime.now().isoformat(),
-        "mode": "user"
+        "mode": "user",
+        "profile_complete": False,
+        "profile": {}
     }
     users[email]["admin_password"] = None
 
     save_users(users)
     return True, "User registered successfully"
+
+def get_user_profile(email):
+    """Get user profile data with smart completion check"""
+    users = load_users()
+    if email in users:
+        profile = users[email].get("profile", {})
+        is_complete = users[email].get("profile_complete", False)
+        
+        # Smart Check: If flag is False but critical fields exist, treat as complete
+        if not is_complete:
+            has_role = bool(profile.get("role"))
+            has_skills = bool(profile.get("skills"))
+            if has_role or has_skills:
+                is_complete = True
+                
+        return profile, is_complete
+    return {}, False
+
+def update_profile(email, profile_data):
+    """Update user profile"""
+    users = load_users()
+    if email in users:
+        users[email]["profile"] = profile_data
+        users[email]["profile_complete"] = True
+        save_users(users)
+        return True, "Profile updated successfully"
+    return False, "User not found"
 
 def login_user(email, password):
     """Login user"""
@@ -103,109 +132,205 @@ def login_user(email, password):
     return True, "Login successful"
 
 def show_auth_page(mode="signin"):
-    """Show authentication page"""
+    """Show authentication page with Premium UI"""
+    
+    # Consistent Background & Layout
+    
+    # Determine Theme Colors
+    theme = st.session_state.get("app_theme", "light")
+    
+    if theme == "dark":
+        bg_gradient = "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)"
+        text_color = "white"
+        subtitle_color = "#94a3b8"
+        input_bg = "rgba(255, 255, 255, 0.05)"
+        input_text = "white"
+        input_border = "rgba(255, 255, 255, 0.1)"
+    else:
+        # Light Theme Colors - Professional Blue/Purple
+        bg_gradient = "linear-gradient(135deg, #f8fafc 0%, #e0e7ff 100%)"
+        text_color = "#1e293b"
+        subtitle_color = "#475569"
+        input_bg = "rgba(255, 255, 255, 0.8)"
+        input_text = "#0f172a"
+        input_border = "rgba(30, 41, 59, 0.1)"
 
-    if mode == "signin":
-        st.markdown("<h2 style='text-align: center;'>🔐 Sign In</h2>", unsafe_allow_html=True)
+    st.markdown(f"""
+        <style>
+            /* Global Background (Matches Landing) */
+            [data-testid="stAppViewContainer"] {{
+                background: {bg_gradient} !important;
+            }}
+            
+            /* Text Auto-Adaptation */
+            h2, p, label, .stTextInput label, .stExpander p {{
+                color: {text_color} !important;
+            }}
+            p {{
+                color: {subtitle_color} !important;
+            }}
+            
+            /* Compact Spacing */
+            .block-container {{ padding-top: 5vh !important; padding-bottom: 2rem !important; }}
+            [data-testid="stVerticalBlock"] {{ gap: 0.5rem !important; }}
+            
+            /* Button Text Visibility - Target Primary Only */
+            .stButton button[kind="primary"] p, .stButton button[data-testid="baseButton-primary"] p {{
+                color: #ffffff !important;
+                font-weight: 600 !important;
+            }}
+            .stButton button[kind="secondary"] p, .stButton button[data-testid="baseButton-secondary"] p {{
+                color: {text_color} !important;
+                font-weight: 600 !important;
+            }}
+            
+            /* Forgot Password / Ghost Button Style */
+            .stButton button[kind="secondary"] {{
+                background-color: transparent !important;
+                border: 1px solid {input_border} !important;
+            }}
+            .stButton button[kind="secondary"]:hover {{
+                border-color: #818cf8 !important;
+                color: #818cf8 !important;
+            }}
 
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            # normal login fields
-            email = st.text_input("📧 Email", placeholder="your@email.com")
-            password = st.text_input("🔒 Password", type="password", placeholder="Enter password")
+            /* Specific Blue Link Style for Forgot Password */
+            .element-container:has(#forgot-pass-btn-marker) + .element-container button {{
+                border: none !important;
+                padding: 0 !important;
+                height: auto !important;
+            }}
+            .element-container:has(#forgot-pass-btn-marker) + .element-container button p {{
+                color: #3b82f6 !important;
+                text-decoration: underline !important;
+                font-size: 0.85rem !important;
+            }}
+            
+            /* Form Input Polish */
+            .stTextInput input {{
+                background-color: {input_bg} !important;
+                color: {input_text} !important;
+                border: 1px solid {input_border} !important;
+            }}
+            .stTextInput input:focus {{
+                border-color: #818cf8 !important;
+                box-shadow: 0 0 0 1px #818cf8 !important;
+            }}
+            
+            /* Hide Streamlit Stuff */
+            footer, header, [data-testid="stHeader"] {{ visibility: hidden; }}
+        </style>
+    """, unsafe_allow_html=True)
+    
+    # Grid Layout for Centering
+    _, col_center, _ = st.columns([1, 0.8, 1])
+    
+    with col_center:
+        # Glass Card Container
+        with st.container():
+            if mode == "signin":
+                st.markdown("<h2 style='text-align: center; margin-bottom: 0.5rem;'>👋 Welcome Back</h2>", unsafe_allow_html=True)
+                st.markdown("<p style='text-align: center; margin-bottom: 1.5rem;'>Login to your account</p>", unsafe_allow_html=True)
 
-            # ---------- Forgot password block ----------
-            forgot = st.checkbox("Forgot password?")
-            # make sure these variables always exist
-            fp_email = ""
-            reset_code = ""
-            new_pass = ""
-            new_pass2 = ""
+                email = st.text_input("Email", placeholder="name@example.com", key="login_email")
+                password = st.text_input("Password", type="password", placeholder="••••••", key="login_pass")
 
-            if forgot:
-                with st.expander("Reset your password"):
-                    fp_email = st.text_input("Registered email", key="fp_email")
-                    if st.button("Send reset code", key="fp_send"):
-                        if not fp_email:
-                            st.error("Enter your email")
-                        else:
+                col_forgot, _ = st.columns([1, 0.1])
+                with col_forgot:
+                     st.markdown('<span id="forgot-pass-btn-marker"></span>', unsafe_allow_html=True)
+                     if st.button("Forgot Password?", key="forgot_btn_top"):
+                         st.session_state.show_forgot = not st.session_state.get("show_forgot", False)
+
+                if st.session_state.get("show_forgot", False):
+                    with st.expander("Reset Password", expanded=True):
+                        fp_email = st.text_input("Email", key="fp_email")
+                        if st.button("Send Code", key="fp_send"):
                             ok, msg = create_reset_code(fp_email)
-                            if ok:
-                                st.info(f"A reset code has been generated: {msg}")
-                            else:
-                                st.error(msg)
+                            if ok: st.info(f"Code: {msg}")
+                            else: st.error(msg)
+                        
+                        rc = st.text_input("Code", key="fp_code")
+                        np = st.text_input("New Pass", type="password", key="fp_new")
+                        if st.button("Reset", key="fp_reset"):
+                             ok, msg = reset_password_with_code(fp_email, rc, np)
+                             if ok: st.success(msg)
+                             else: st.error(msg)
 
-                    reset_code = st.text_input("Enter reset code", key="fp_code")
-                    new_pass = st.text_input("New password", type="password", key="fp_new")
-                    new_pass2 = st.text_input("Confirm new password", type="password", key="fp_new2")
-                    if st.button("Reset password", key="fp_reset"):
-                        if not fp_email:
-                            st.error("Enter your email")
-                        elif new_pass != new_pass2:
-                            st.error("Passwords do not match")
-                        else:
-                            ok, msg = reset_password_with_code(fp_email, reset_code, new_pass)
-                            if ok:
-                                st.success(msg)
-                            else:
-                                st.error(msg)
-            # ---------- end forgot password block ----------
-
-            # normal sign‑in + back buttons
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("Sign In", use_container_width=True, type="primary", key="signin_submit"):
+                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                
+                if st.button("🔐 Login", use_container_width=True, type="primary", key="signin_submit"):
                     if email and password:
                         success, message = login_user(email, password)
                         if success:
                             st.session_state.user_logged_in = True
                             st.session_state.user_email = email
-                            st.session_state.page = "mode_selection"
-                            st.success(message)
+                            
+                            # Check Profile Completeness
+                            _, is_complete = get_user_profile(email)
+                            if not is_complete:
+                                st.session_state.page = "profile"
+                            else:
+                                st.session_state.page = "mode_selection"
+                            
                             st.rerun()
                         else:
                             st.error(message)
                     else:
-                        st.error("❌ Please fill all fields")
+                        st.warning("Fill fields")
 
-            with col_b:
-                if st.button("← Back", use_container_width=True, key="signin_back"):
-                    st.session_state.page = "landing"
+                st.markdown("<div style='text-align: center; margin-top: 2rem; margin-bottom: 0.5rem; font-size: 0.9rem;'><p>New here?</p></div>", unsafe_allow_html=True)
+                if st.button("✨ Create Account", use_container_width=True, type="primary", key="goto_signup"):
+                    st.session_state.page = "signup"
                     st.rerun()
 
-    
-    else:  # signup
-        st.markdown("<h2 style='text-align: center;'>📝 Sign Up</h2>", unsafe_allow_html=True)
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            name = st.text_input("👤 Full Name", placeholder="John Doe")
-            email = st.text_input("📧 Email", placeholder="your@email.com")
-            phone = st.text_input("📱 Phone", placeholder="+1-800-000-0000")
-            password = st.text_input("🔒 Password", type="password", placeholder="Min 6 characters")
-            confirm_pass = st.text_input("🔒 Confirm Password", type="password", placeholder="Confirm password")
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                if st.button("Sign Up", use_container_width=True, type="primary"):
+            else:  # SIGNUP
+                st.markdown("<h2 style='text-align: center; margin-bottom: 0.5rem;'>🚀 Create Account</h2>", unsafe_allow_html=True)
+                st.markdown("<p style='text-align: center; margin-bottom: 1.5rem;'>Start your journey</p>", unsafe_allow_html=True)
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    name = st.text_input("Name", placeholder="John Doe", key="reg_name")
+                with c2:
+                    phone = st.text_input("Phone", placeholder="+1234567890", key="reg_phone")
+                    
+                email = st.text_input("Email", placeholder="name@example.com", key="reg_email")
+                
+                c3, c4 = st.columns(2)
+                with c3:
+                    password = st.text_input("Password", type="password", placeholder="6+ chars", key="reg_pass")
+                with c4:
+                    confirm_pass = st.text_input("Confirm", type="password", placeholder="Re-enter", key="reg_confirm")
+                
+                st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
+                
+                if st.button("✨ Create Account", use_container_width=True, type="primary"):
                     if not all([name, email, phone, password, confirm_pass]):
-                        st.error("❌ Please fill all fields")
+                        st.error("Fill all fields")
                     elif password != confirm_pass:
-                        st.error("❌ Passwords don't match")
+                        st.error("Pass mismatch")
                     elif len(password) < 6:
-                        st.error("❌ Password must be at least 6 characters")
+                        st.error("Pass too short")
                     else:
                         success, message = register_user(name, email, phone, password)
                         if success:
                             st.session_state.user_logged_in = True
                             st.session_state.user_email = email
-                            st.session_state.page = "mode_selection"
+                            
+                            # New user always needs profile setup
+                            st.session_state.page = "profile"
+                            
                             st.success(message)
                             st.rerun()
                         else:
                             st.error(message)
-            
-            with col_b:
-                if st.button("← Back", use_container_width=True):
-                    st.session_state.page = "landing"
+                
+                st.markdown("<div style='text-align: center; margin-top: 2rem; margin-bottom: 0.5rem; font-size: 0.9rem;'><p>Have an account?</p></div>", unsafe_allow_html=True)
+                if st.button("🔐 Login Instead", use_container_width=True, type="primary", key="goto_signin"):
+                    st.session_state.page = "signin"
                     st.rerun()
+        
+    # Back Home (Small, Corner)
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("⬅️ Home", key="auth_back_home", type="primary"):
+        st.session_state.page = "landing"
+        st.rerun()

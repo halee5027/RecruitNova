@@ -6,9 +6,19 @@
     "password": "38fdf149592a5e407850f66da1b359dd6245ad71436f6fd3aa8217a7c344e599",
     "created_at": "2025-12-06T00:18:23.991762",
     "mode": "user",
-    "admin_password": "d590427842def6200d0a274480e57ecf21d004d013d5121416a6ccd6ddb433d7",
-    "bio": "hi",
-    "updated_at": "2025-12-07T09:01:22.386142"
+    "admin_password": "064a86134e17a162621510ce298b666799d60d02817f2b380a7eb1af8a7315e2",
+    "bio": "hello",
+    "updated_at": "2025-12-18T10:33:24.903932",
+    "profile_setup_started": true,
+    "profile": {
+      "role": "User",
+      "linkedin": "",
+      "experience": "1-3 years",
+      "location": "",
+      "skills": "General",
+      "bio": "hello"
+    },
+    "profile_complete": true
   },
   "noorshah5279@gmail.com": {
     "name": "Noor Shah",
@@ -20,15 +30,24 @@
     "admin_password": null,
     "bio": "",
     "profile_setup_started": true,
-    "updated_at": "2025-12-07T09:17:38.568798"
+    "updated_at": "2025-12-07T09:17:38.568798",
+    "profile": {
+      "role": "User",
+      "linkedin": "",
+      "experience": "1-3 years",
+      "location": "",
+      "skills": "General",
+      "bio": ""
+    },
+    "profile_complete": true
   },
-  "aksh.akshaya04@gmail.com": {
-    "name": "Akshaya",
-    "email": "aksh.akshaya04@gmail.com",
-    "phone": "9113997853",
-    "password": "cf332448230c29772c31da7440080fe84e89d3cc2c75c92436f7d85ce25495a6",
-    "created_at": "2025-12-08T14:03:31.929645",
+  "test@test.com": {
+    "name": "Test User",
+    "email": "test@test.com",
+    "phone": "1234567890",
+    "password": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+    "created_at": "2026-01-14T08:16:14.485211",
     "mode": "user",
-    "admin_password": "36f2be3d7e6a676307baa6069b42b26d888ea657dcd80d8ceee6aa47c4d84104"
+    "admin_password": null
   }
 }

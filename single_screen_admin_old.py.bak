@@ -17,11 +17,7 @@ from utils.extract import extract_text_from_file, extract_skills, match_job_skil
 from utils.experience import estimate_experience_years, experience_percentage, classify_experience_level
 from utils.ranking import calculate_final_score
 from utils.analyzer import analyze_resume
-from utils.growth_predictor import predict_growth
-from utils.comparison_engine import prepare_comparison_data, create_comparison_metrics_chart, get_comparison_insights, create_skills_comparison_radar
-from utils.pdf_report import generate_candidate_report_pdf, generate_comparison_report_pdf
-from utils.radar_chart import parse_skills_to_dimensions, create_radar_chart, calculate_dimensions_from_text
-from utils.timeline_generator import extract_timeline_from_resume, create_career_timeline, create_vertical_timeline_html
+from utils.performance_predictor import predict_performance
 
 
 
@@ -259,9 +255,6 @@ def screen_bulk_resumes(job_desc, resume_files):
             file_hash = get_file_hash(file_content)
             resume_file.seek(0)
             
-            # Extract timeline events
-            timeline_events = extract_timeline_from_resume(result.get("text", ""))
-            
             results.append({
                 "candidate_name": resume_file.name.replace('.pdf', '').replace('.docx', '').replace('.txt', ''),
                 "email": result.get("email", "Not provided"),
@@ -278,9 +271,7 @@ def screen_bulk_resumes(job_desc, resume_files):
                 "resume_path": None,
                 "file_content": file_content,
                 "original_filename": resume_file.name,
-                "ats_details": result.get("ats_details", {}),
-                "resume_text": result.get("text", ""),  # Store full text
-                "timeline_events": timeline_events      # Store extracted timeline
+                "ats_details": result.get("ats_details", {})
             })
     
     results.sort(key=lambda x: x["overall_score"], reverse=True)
@@ -465,16 +456,13 @@ def show_admin_dashboard():
         </h1>
     """, unsafe_allow_html=True)
     # Tabs for clearer navigation
-    tab_single, tab_bulk, tab_jd, tab_fetch, tab_compare, tab_analytics, tab_stats, tab_stored, tab_growth = st.tabs([
+    tab_single, tab_bulk, tab_jd, tab_fetch, tab_stats, tab_stored = st.tabs([
         "📝 Single Screening", 
         "📑 Bulk Screening", 
         "📃 JD Auto-Screen", 
-        "🔄 Fetch & Screen",
-        "🔍 Candidate Comparison",
-        "📊 Analytics & Reports",
-        "📈 Statistics", 
-        "📂 Stored Resumes",
-        "📈 Growth Predictor"
+        "🔄 Fetch & Screen", 
+        "📊 Statistics", 
+        "📂 Stored Resumes"
     ])
 
     with tab_single:
@@ -488,12 +476,6 @@ def show_admin_dashboard():
         
     with tab_fetch:
         show_fetch_and_screen_page()
-    
-    with tab_compare:
-        show_candidate_comparison()
-    
-    with tab_analytics:
-        show_analytics_and_reports()
         
     with tab_stats:
         # Check if function exists locally or needs import, assuming it's available since it was called previously
@@ -506,115 +488,329 @@ def show_admin_dashboard():
     with tab_stored:
         show_stored_resumes()
     
-    with tab_growth:
-        st.markdown("""
-        <div style="text-align: center; padding: 2rem 0;">
-            <h2 style="font-size: 2.5rem; margin: 0;">📈 Future Growth Predictor</h2>
-            <p style="opacity: 0.8; font-size: 1.1rem;">Predict career growth potential and trajectory</p>
-        </div>
-        """, unsafe_allow_html=True)
+    # ==================== PREMIUM PERFORMANCE PREDICTOR ====================
+
+def show_single_screening():
+        st.markdown("""<div style="text-align: center; padding: 2rem 0;">
+            <h2 style="font-size: 2.5rem; margin: 0;">🎯 AI Performance Predictor</h2>
+            <p style="opacity: 0.8; font-size: 1.1rem; margin-top: 0.5rem;">Upload a resume to unlock comprehensive performance insights</p>
+        </div>""", unsafe_allow_html=True)
         
         st.markdown("---")
         
-        growth_resume = st.file_uploader("📄 Upload Resume for Growth Analysis", type=["pdf", "docx", "txt"], key="growth_upload")
+        # Premium file uploader
+        uploaded_resume = st.file_uploader(
+            "📄 Upload Resume for Analysis",
+            type=["pdf", "docx", "txt"],
+            key="perf_pred_upload",
+            help="Supported formats: PDF, DOCX, TXT"
+        )
         
-        if growth_resume:
+        if uploaded_resume:
+            # Create unique hash for this file to prevent caching
+            file_hash = hashlib.md5(uploaded_resume.getvalue()).hexdigest()[:8]
+            
+            # Check if this is a new file (different from last analyzed)
+            if 'last_analyzed_hash' not in st.session_state:
+                st.session_state.last_analyzed_hash = None
+            if 'last_prediction_result' not in st.session_state:
+                st.session_state.last_prediction_result = None
+            
+            # Display file info for verification
+            st.info(f"📄 Analyzing: **{uploaded_resume.name}** ({uploaded_resume.size} bytes) - ID: {file_hash}")
+            
+            st.markdown("---")
+            
+            # Save and process resume
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_resume.name.split('.')[-1]}") as tmp:
+                uploaded_resume.seek(0)
+                tmp.write(uploaded_resume.read())
+                tmp_path = tmp.name
+            
             try:
-                with st.spinner("🔮 Analyzing growth potential..."):
-                    # Extract directly from file object (like other tabs do)
-                    resume_text = extract_text_from_file(growth_resume)
+                with st.spinner("🔮 Analyzing resume with advanced AI..."):
+                    # Extract data
+                    resume_text = extract_text_from_file(tmp_path)
+                    
+                    # Debug: Show extracted text length
+                    text_length = len(resume_text)
+                    
                     skills_list = extract_skills(resume_text)
                     years_exp = estimate_experience_years(resume_text)
                     
                     # Show extraction summary
                     with st.expander("📊 Extraction Summary", expanded=False):
                         col1, col2, col3 = st.columns(3)
-                        col1.metric("Resume Length", f"{len(resume_text)} chars")
-                        col2.metric("Skills Found", len(skills_list))
-                        col3.metric("Years Experience", years_exp)
+                        with col1:
+                            st.metric("Resume Length", f"{text_length} chars")
+                        with col2:
+                            st.metric("Skills Found", len(skills_list))
+                        with col3:
+                            st.metric("Experience", f"{years_exp} years")
+                        
                         if skills_list:
-                            st.write("**Skills:**", ", ".join(skills_list[:15]))
+                            st.write("**Skills Detected:**", ", ".join(skills_list[:10]))
+                        if len(resume_text) > 100:
+                            st.write("**Resume Preview:**", resume_text[:200] + "...")
                     
-                    # Predict growth
-                    growth_data = predict_growth(resume_text, years_exp, skills_list)
                     
-                    st.success("✅ Growth Analysis Complete!")
+                    # Only re-analyze if this is a different file
+                    if file_hash != st.session_state.last_analyzed_hash:
+                        # Predict performance with fresh data
+                        prediction = predict_performance(resume_text, years_exp, skills_list)
+                        st.session_state.last_prediction_result = prediction
+                        st.session_state.last_analyzed_hash = file_hash
+                    else:
+                        # Use cached result for the same file
+                        prediction = st.session_state.last_prediction_result
                     
-                    # Overall Score
-                    st.markdown(f"""
-                    <div style="text-align: center; background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(139, 92, 246, 0.1)); padding: 2.5rem; border-radius: 20px; margin: 1.5rem 0;">
-                        <div style="font-size: 0.9rem; opacity: 0.8;">Overall Growth Score</div>
-                        <div style="font-size: 4rem; font-weight: 900; color: {growth_data['rating_color']};">{int(growth_data['overall_score'])}</div>
-                        <div style="font-size: 1rem; opacity: 0.7;">/100</div>
-                        <div style="font-size: 1.5rem; font-weight: 700; color: {growth_data['rating_color']}; margin-top: 1rem;">{growth_data['rating']}</div>
-                        <div style="font-size: 0.9rem; opacity: 0.8; margin-top: 0.8rem;">⏱️ Time to Next Level: <strong>{growth_data['time_to_next_level']}</strong></div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.success("✅ Analysis Complete!")
+                    st.markdown("")
                     
-                    # 5 Dimensions
-                    st.markdown("### 📊 Growth Dimensions")
-                    dims = growth_data['dimension_scores']
-                    col1, col2, col3, col4, col5 = st.columns(5)
+                    # ===== OVERALL SCORE DISPLAY =====
+                    st.markdown("""<div class="glass-card" style="text-align: center; padding: 3rem 2rem; margin: 2rem 0;">
+                        <div style="font-size: 1.2rem; opacity: 0.7; margin-bottom: 1rem;">Overall Performance Score</div>
+                        <div style="position: relative; display: inline-block;">
+                            <div style="font-size: 5rem; font-weight: 800; background: linear-gradient(135deg, {}, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">{}</div>
+                            <div style="font-size: 1.5rem; opacity: 0.6; margin-top: -1rem;">/ 100</div>
+                        </div>
+                        <div style="font-size: 1.5rem; font-weight: 600; color: {}; margin-top: 1rem;">{}</div>
+                        <div style="font-size: 0.9rem; opacity: 0.6; margin-top: 0.5rem;">Confidence: {} ({}%)</div>
+                    </div>""".format(
+                        prediction['rating_color'],
+                        int(prediction['overall_score']),
+                        prediction['rating_color'],
+                        prediction['rating'],
+                        prediction['confidence'],
+                        prediction['confidence_score']
+                    ), unsafe_allow_html=True)
                     
-                    for col, (icon, name, key) in zip([col1, col2, col3, col4, col5], [
-                        ('🎓', 'Learning', 'learning_velocity'),
-                        ('📈', 'Career', 'career_trajectory'),
-                        ('🔄', 'Adaptability', 'adaptability'),
-                        ('👑', 'Leadership', 'leadership_evolution'),
-                        ('⚡', 'Impact', 'impact_magnitude')
-                    ]):
-                        score = int(dims[key])
-                        color = "#10b981" if score >= 75 else "#f59e0b" if score >= 60 else "#ef4444"
-                        with col:
-                            st.markdown(f"""
-                            <div style="text-align: center; background: rgba(255,255,255,0.03); padding: 1.2rem 0.5rem; border-radius: 12px;">
-                                <div style="font-size: 2rem;">{icon}</div>
-                                <div style="font-size: 1.8rem; font-weight: 800; color: {color};">{score}</div>
-                                <div style="font-size: 0.7rem; opacity: 0.8;">{name}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
+                    # ===== 5 DIMENSION SCORES =====
+                    st.markdown("### 📊 Performance Breakdown")
+                    
+                    dims = prediction['dimension_scores']
+                    dimension_data = [
+                        ('Technical Excellence', dims['technical_excellence'], '💻'),
+                        ('Professional Experience', dims['professional_experience'], '👔'),
+                        ('Cultural & Team Fit', dims['cultural_fit'], '🤝'),
+                        ('Growth Trajectory', dims['growth_trajectory'], '📈'),
+                        ('Leadership Potential', dims['leadership_potential'], '👑')
+                    ]
+                    
+                    cols = st.columns(5)
+                    for idx, (name, score, icon) in enumerate(dimension_data):
+                        with cols[idx]:
+                            color = "#22c55e" if score >= 75 else "#f59e0b" if score >= 60 else "#ef4444"
+                            st.markdown(f"""<div class="glass-card" style="text-align: center; padding: 1.5rem 0.5rem;">
+                                <div style="font-size: 2.5rem;">{icon}</div>
+                                <div style="font-size: 2rem; font-weight: 700; color: {color}; margin: 0.5rem 0;">{int(score)}</div>
+                                <div style="font-size: 0.75rem; opacity: 0.7; line-height: 1.2;">{name}</div>
+                            </div>""", unsafe_allow_html=True)
                     
                     st.markdown("")
                     
-                    # Insights
-                    st.markdown("### 💡 Growth Insights")
+                    # ===== DETAILED ANALYSIS (COLLAPSIBLE) =====
+                    st.markdown("### 📋 Detailed Analysis")
+                    
+                    # Technical Competency
+                    with st.expander("💻 Technical Competency", expanded=True):
+                        tech_details = prediction['dimension_details']['technical']
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Total Skills", tech_details['skill_count'])
+                            st.metric("Future Tech Skills", tech_details['future_tech_count'])
+                        with col2:
+                            st.metric("Certifications", tech_details['certifications'])
+                            if tech_details['depth_indicators']:
+                                st.write("**Depth Indicators:**", ", ".join(tech_details['depth_indicators']))
+                    
+                    # Professional Experience
+                    with st.expander("👔 Professional Background"):
+                        exp_details = prediction['dimension_details']['experience']
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Years of Experience", f"{exp_details['years']} years")
+                            st.metric("Senior Role", "✅ Yes" if exp_details['senior_role'] else "❌ No")
+                        with col2:
+                            st.metric("Top Tier Company", "✅ Yes" if exp_details['top_company'] else "❌ No")
+                            st.metric("Achievement Metrics", exp_details['achievements'])
+                    
+                    # Cultural Fit
+                    with st.expander("🤝 Cultural & Team Fit"):
+                        culture_details = prediction['dimension_details']['cultural_fit']
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Collaboration Score", f"{culture_details['collaboration_score']}/30")
+                        with col2:
+                            st.metric("Communication Score", f"{culture_details['communication_score']}/20")
+                        st.info(f"**Team Experience:** {culture_details['team_size']}")
+                    
+                    # Growth Trajectory
+                    with st.expander("📈 Growth & Adaptability"):
+                        growth_details = prediction['dimension_details']['growth']
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Career Trajectory", growth_details['trajectory'])
+                            st.metric("Promotions", growth_details['promotions'])
+                        with col2:
+                            st.metric("Learning Indicators", growth_details['learning_indicators'])
+                    
+                    # Leadership Potential
+                    with st.expander("👑 Leadership Assessment"):
+                        leadership_details = prediction['dimension_details']['leadership']
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Strategic Thinking", "✅ Yes" if leadership_details['strategic_thinking'] else "❌ Limited")
+                        with col2:
+                            st.metric("People Management", "✅ Yes" if leadership_details['people_management'] else "❌ Limited")
+                        if leadership_details['leadership_indicators']:
+                            st.write("**Leadership Keywords Found:**")
+                            for indicator in leadership_details['leadership_indicators']:
+                                st.write(f"• {indicator}")
+                    
+                    # Risk Assessment
+                    with st.expander("⚠️ Risk Analysis"):
+                        risk_data = prediction['risk_assessment']
+                        risk_score = risk_data['risk_score']
+                        
+                        if risk_score >= 80:
+                            st.success(f"**Low Risk Profile** ({int(risk_score)}/100)")
+                        elif risk_score >= 60:
+                            st.warning(f"**Moderate Risk Profile** ({int(risk_score)}/100)")
+                        else:
+                            st.error(f"**High Risk Profile** ({int(risk_score)}/100)")
+                        
+                        if risk_data['risk_factors']:
+                            st.write("**Risk Factors Identified:**")
+                            for risk in risk_data['risk_factors']:
+                                st.write(f"⚠️ {risk}")
+                        else:
+                            st.success("✅ No significant risk factors identified")
+                    
+                    st.markdown("")
+                    
+                    # ===== AI RECOMMENDATIONS =====
+                    st.markdown("### 💡 AI-Powered Recommendations")
+                    
+                    recs = prediction['recommendations']
+                    
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.markdown("**🎯 Optimal Roles:**")
-                        for role in growth_data['recommendations']['optimal_roles'][:3]:
-                            st.write(f"• {role}")
-                        st.markdown(f"**📊 Success Probability:** {growth_data['recommendations']['success_probability']}")
+                        st.markdown("""<div class="glass-card" style="padding: 1.5rem;">
+                            <h4>🎯 Best Role Fit</h4>
+                            <ul>
+                        """, unsafe_allow_html=True)
+                        for role in recs['role_fit']:
+                            st.markdown(f"<li>{role}</li>", unsafe_allow_html=True)
+                        st.markdown("</ul></div>", unsafe_allow_html=True)
+                        
+                        if recs['strengths']:
+                            st.markdown("""<div class="glass-card" style="padding: 1.5rem; margin-top: 1rem;">
+                                <h4>✨ Key Strengths</h4>
+                            """, unsafe_allow_html=True)
+                            for strength in recs['strengths']:
+                                st.markdown(f"<div style='padding: 0.5rem 0;'>✅ {strength}</div>", unsafe_allow_html=True)
+                            st.markdown("</div>", unsafe_allow_html=True)
                     
                     with col2:
-                        st.markdown("**🚀 Growth Accelerators:**")
-                        for action in growth_data['recommendations']['recommended_actions']:
-                            st.write(f"✅ {action}")
-                    
-                    # Blockers
-                    if growth_data['growth_blockers'][0] != "No significant blockers identified":
-                        with st.expander("⚠️ Potential Blockers"):
-                            for blocker in growth_data['growth_blockers']:
-                                st.warning(blocker)
-                    else:
-                        st.success("✅ No significant growth blockers!")
+                        st.markdown(f"""<div class="glass-card" style="padding: 1.5rem;">
+                            <h4>👥 Recommended Team Size</h4>
+                            <p style="font-size: 1.2rem; font-weight: 600; margin: 1rem 0;">{recs['team_size']}</p>
+                        </div>""", unsafe_allow_html=True)
                         
+                        if recs['onboarding_focus']:
+                            st.markdown("""<div class="glass-card" style="padding: 1.5rem; margin-top: 1rem;">
+                                <h4>🚀 Onboarding Focus Areas</h4>
+                            """, unsafe_allow_html=True)
+                            for focus in recs['onboarding_focus']:
+                                st.markdown(f"<div style='padding: 0.5rem 0;'>📌 {focus}</div>", unsafe_allow_html=True)
+                            st.markdown("</div>", unsafe_allow_html=True)
+                        elif recs['development_areas']:
+                            st.markdown("""<div class="glass-card" style="padding: 1.5rem; margin-top: 1rem;">
+                                <h4>📈 Development Areas</h4>
+                            """, unsafe_allow_html=True)
+                            for area in recs['development_areas']:
+                                st.markdown(f"<div style='padding: 0.5rem 0;'>🎯 {area}</div>", unsafe_allow_html=True)
+                            st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("")
+                    
+                    # ===== FINAL RECOMMENDATION =====
+                    if prediction['overall_score'] >= 80:
+                        rec_text = "🌟 Highly Recommended - This candidate demonstrates exceptional potential across all dimensions."
+                        rec_color = "#10b981"
+                    elif prediction['overall_score'] >= 70:
+                        rec_text = "⭐ Strongly Recommended - This candidate shows excellent capabilities with minor areas for development."
+                        rec_color = "#22c55e"
+                    elif prediction['overall_score'] >= 60:
+                        rec_text = "👍 Recommended - This candidate has solid skills and good potential for growth."
+                        rec_color = "#f59e0b"
+                    else:
+                        rec_text = "👌 Consider Carefully - This candidate may require additional evaluation or onboarding support."
+                        rec_color = "#fb923c"
+                    
+                    st.markdown(f"""<div class="glass-card" style="padding: 2rem; border-left: 5px solid {rec_color};">
+                        <h3 style="margin-top: 0; color: {rec_color};">Final Recommendation</h3>
+                        <p style="font-size: 1.1rem; margin: 0;">{rec_text}</p>
+                    </div>""", unsafe_allow_html=True)
+                    
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                st.error(f"⚠️ Error analyzing resume: {str(e)}")
                 import traceback
-                st.code(traceback.format_exc())
+                with st.expander("See error details"):
+                    st.code(traceback.format_exc())
+            finally:
+                # Cleanup
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
         else:
-            st.info("👆 Upload a resume to unlock growth analysis")
-            st.markdown("### ✨ What We Analyze")
+            # ===== FEATURE PREVIEW =====
+            st.info("👆 Upload a resume above to unlock comprehensive AI-powered performance analysis")
+            
+            st.markdown("### ✨ What Makes This Analysis Special?")
+            
             col1, col2, col3 = st.columns(3)
+            
             with col1:
-                st.markdown("**🎓 Learning Velocity**\nModern tech, certifications, continuous learning")
+                st.markdown("""<div class="glass-card" style="padding: 1.5rem;">
+                    <h4>🔬 5-Dimensional Analysis</h4>
+                    <ul style="font-size: 0.9rem;">
+                        <li>Technical Excellence</li>
+                        <li>Professional Experience</li>
+                        <li>Cultural & Team Fit</li>
+                        <li>Growth Trajectory</li>
+                        <li>Leadership Potential</li>
+                    </ul>
+                </div>""", unsafe_allow_html=True)
+            
             with col2:
-                st.markdown("**📈 Career Trajectory**\nJob progression, promotions, company tier")
+                st.markdown("""<div class="glass-card" style="padding: 1.5rem;">
+                    <h4>🎯 AI Recommendations</h4>
+                    <ul style="font-size: 0.9rem;">
+                        <li>Best role fit suggestions</li>
+                        <li>Ideal team size</li>
+                        <li>Onboarding focus areas</li>
+                        <li>Development roadmap</li>
+                        <li>Risk assessment</li>
+                    </ul>
+                </div>""", unsafe_allow_html=True)
+            
             with col3:
-                st.markdown("**🔄 Adaptability**\nSkill diversity, tech breadth, flexibility")
+                st.markdown("""<div class="glass-card" style="padding: 1.5rem;">
+                    <h4>📊 Advanced Insights</h4>
+                    <ul style="font-size: 0.9rem;">
+                        <li>Skill gap analysis</li>
+                        <li>Career trajectory mapping</li>
+                        <li>Confidence scoring</li>
+                        <li>Risk factor identification</li>
+                        <li>Comparative benchmarking</li>
+                    </ul>
+                </div>""", unsafe_allow_html=True)
 
-    
+
+
+
 def show_single_screening():
     """Single resume screening - YOUR ORIGINAL LOGIC + ATS"""
     st.markdown("## 📝 Single Resume Screening")
@@ -1239,284 +1435,3 @@ def show_stored_resumes():
 
     
 
-# ==================== CANDIDATE COMPARISON ====================
-def show_candidate_comparison():
-    """Compare multiple candidates side-by-side with radar charts"""
-    st.markdown("<h2 style='text-align: center;'>🔍 Candidate Comparison Tool</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #94a3b8;'>Compare up to 5 candidates side-by-side</p>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    # Check if we have bulk screening results
-    if 'bulk_results' not in st.session_state or not st.session_state.bulk_results:
-        st.warning("⚠️ No candidates available for comparison. Please run Bulk Screening first.")
-        st.info("💡 Go to the 'Bulk Screening' tab to upload and screen resumes.")
-        return
-    
-    results = st.session_state.bulk_results
-    
-    # Create candidate selection
-    st.subheader("📋 Select Candidates to Compare")
-    
-    candidate_names = [r['candidate_name'] for r in results]
-    selected_candidates = st.multiselect(
-        "Choose 2-5 candidates",
-        candidate_names,
-        max_selections=5,
-        help="Select between 2 and 5 candidates for comparison"
-    )
-    
-    if len(selected_candidates) < 2:
-        st.info("Please select at least 2 candidates to compare.")
-        return
-    
-    # Filter selected candidates and prepare data
-    comparison_candidates = []
-    for r in results:
-        if r['candidate_name'] in selected_candidates:
-            # Map to expected format for comparison engine
-            comparison_candidates.append({
-                'name': r['candidate_name'],
-                'ats_score': r.get('ats_score', 0),
-                'match_percentage': r.get('skill_match', 0),
-                'experience': r.get('experience_level', 'N/A'),
-                'skills': r.get('skills', '').split(', ') if isinstance(r.get('skills'), str) else [],
-                'education': 'N/A',  # Not in current structure
-                'overall_score': r.get('overall_score', 0),
-                'email': r.get('email', 'N/A'),
-                'resume_text': r.get('resume_text', '') # Add resume text for accurate scoring
-            })
-    
-    st.markdown("---")
-    
-    # Comparison Table
-    st.subheader("📊 Comparison Table")
-    comparison_df = prepare_comparison_data(comparison_candidates)
-    
-    # Use st.table for better visibility in dark theme
-    st.table(comparison_df)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Metrics Comparison Chart
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📈 Metrics Comparison")
-        metrics_chart = create_comparison_metrics_chart(comparison_candidates)
-        st.plotly_chart(metrics_chart, use_container_width=True)
-    
-    with col2:
-        st.subheader("🎯 Skills Radar Comparison")
-        radar_chart = create_skills_comparison_radar(comparison_candidates)
-        st.plotly_chart(radar_chart, use_container_width=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Insights
-    st.subheader("💡 Comparison Insights")
-    insights = get_comparison_insights(comparison_candidates)
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Top Candidate", insights.get('top_candidate', 'N/A'), 
-                 f"Score: {insights.get('top_score', 0)}")
-    
-    with col2:
-        st.metric("Most Skilled", insights.get('most_skilled', 'N/A'),
-                 f"{insights.get('skill_count', 0)} skills")
-    
-    with col3:
-        st.metric("Best ATS", insights.get('best_ats', 'N/A'),
-                 f"{insights.get('best_ats_score', 0)}/100")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Export Comparison Report
-    st.subheader("📄 Export Comparison Report")
-    
-    if st.button("Generate PDF Comparison Report", type="primary", use_container_width=True):
-        with st.spinner("Generating PDF report..."):
-            try:
-                # Generate light-themed chart for PDF
-                metrics_chart_pdf = create_comparison_metrics_chart(comparison_candidates, light_theme=True)
-                
-                # Generate comparison report
-                pdf_bytes = generate_comparison_report_pdf(
-                    comparison_candidates,
-                    comparison_chart=metrics_chart_pdf
-                )
-                
-                st.download_button(
-                    label="📥 Download Comparison Report",
-                    data=pdf_bytes,
-                    file_name=f"candidate_comparison_{dtime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                
-                st.success("✅ Report generated successfully!")
-                
-            except Exception as e:
-                st.error(f"Error generating report: {str(e)}")
-
-
-# ==================== ANALYTICS & REPORTS ====================
-def show_analytics_and_reports():
-    """Advanced analytics with timelines, radar charts, and PDF exports"""
-    st.markdown("<h2 style='text-align: center;'>📊 Analytics & Reports</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #94a3b8;'>Deep dive into candidate analytics</p>", unsafe_allow_html=True)
-    st.markdown("---")
-    
-    # Check if we have candidates
-    if 'bulk_results' not in st.session_state or not st.session_state.bulk_results:
-        st.warning("⚠️ No candidates available. Please run Bulk Screening first.")
-        return
-    
-    results = st.session_state.bulk_results
-    
-    # Candidate Selection
-    st.subheader("👤 Select Candidate for Detailed Analysis")
-    
-    candidate_names = [r['candidate_name'] for r in results]
-    selected_candidate_name = st.selectbox("Choose a candidate", candidate_names)
-    
-    # Find selected candidate and map to expected format
-    selected_result = next((r for r in results if r['candidate_name'] == selected_candidate_name), None)
-    
-    if not selected_result:
-        return
-    
-    # Map to expected format
-    selected_candidate = {
-        'name': selected_result['candidate_name'],
-        'ats_score': selected_result.get('ats_score', 0),
-        'match_percentage': selected_result.get('skill_match', 0),
-        'experience': selected_result.get('experience_level', 'N/A'),
-        'skills': selected_result.get('skills', '').split(', ') if isinstance(selected_result.get('skills'), str) else [],
-        'overall_score': selected_result.get('overall_score', 0),
-        'email': selected_result.get('email', 'N/A'),
-        'resume_text': selected_result.get('resume_text', ''),  # Now using stored text
-        'timeline_events': selected_result.get('timeline_events', []), # Now using stored events
-        'recommendations': [
-            f"ATS Score: {selected_result.get('ats_score', 0)}/100",
-            f"Skill Match: {selected_result.get('skill_match', 0)}%",
-            f"Experience Level: {selected_result.get('experience_level', 'N/A')}"
-        ]
-    }
-    
-    st.markdown("---")
-    
-    # Tabs for different analytics
-    analytics_tabs = st.tabs(["📈 Career Timeline", "🎯 Skills Radar", "📄 Generate Report"])
-    
-    # Career Timeline Tab
-    with analytics_tabs[0]:
-        st.subheader(f"📈 {selected_candidate_name}'s Career Timeline")
-        
-        timeline_events = selected_candidate.get('timeline_events', [])
-        resume_text = selected_candidate.get('resume_text', '')
-        
-        # Fallback: Extract if not present but we have text
-        if not timeline_events and resume_text:
-            timeline_events = extract_timeline_from_resume(resume_text)
-        
-        if timeline_events:
-            # Create timeline visualization (Modern Vertical)
-            timeline_html = create_vertical_timeline_html(timeline_events)
-            st.markdown(timeline_html, unsafe_allow_html=True)
-            
-            # Show events table
-            # Table removed by user request
-        else:
-            st.info("No timeline data could be extracted from the resume.")
-            st.markdown("This usually happens if the resume doesn't have clear date patterns (e.g. '2020 - 2023').")
-    
-    # Skills Radar Tab
-    with analytics_tabs[1]:
-        st.subheader(f"🎯 {selected_candidate_name}'s Skills Profile")
-        
-        skills = selected_candidate.get('skills', [])
-        resume_text = selected_candidate.get('resume_text', '')
-        
-        # PRIORITIZE full text scanning for accuracy
-        if resume_text:
-            # Use new accurate text scanning
-            dimensions = calculate_dimensions_from_text(resume_text)
-        elif skills:
-            # Fallback to simple skill list parsing
-            skills_text = ', '.join(skills)
-            dimensions = parse_skills_to_dimensions(skills_text)
-        else:
-            dimensions = {}
-            
-        radar_chart = create_radar_chart(dimensions, title=f"Skills Radar - {selected_candidate_name}", show_benchmark=True)
-        st.plotly_chart(radar_chart, use_container_width=True)
-        
-        # Display dimension scores
-        if dimensions:
-            st.markdown("### Dimension Scores")
-            cols = st.columns(3)
-            for idx, (dimension, score) in enumerate(dimensions.items()):
-                with cols[idx % 3]:
-                    st.metric(dimension, f"{score:.0f}/100")
-        else:
-            st.info("No skills data available for this candidate.")
-    
-    # Generate Report Tab
-    with analytics_tabs[2]:
-        st.subheader("📄 Generate Comprehensive Report")
-        
-        st.markdown("""
-        Generate a professional PDF report including:
-        - Candidate information and scores
-        - Skills radar chart
-        - Career timeline
-        - Recommendations
-        """)
-        
-        if st.button("Generate PDF Report", type="primary", use_container_width=True):
-            with st.spinner("Generating comprehensive report..."):
-                try:
-                    # Prepare charts WITH LIGHT THEME FOR PDF
-                    charts = {}
-                    
-                    # Add radar chart with light theme
-                    skills = selected_candidate.get('skills', [])
-                    resume_text = selected_candidate.get('resume_text', '')
-                    
-                    # Prioritize full text scanning
-                    if resume_text:
-                        dimensions = calculate_dimensions_from_text(resume_text)
-                    elif skills:
-                        skills_text = ', '.join(skills)
-                        dimensions = parse_skills_to_dimensions(skills_text)
-                    else:
-                        dimensions = {}
-                        
-                    if dimensions:
-                        charts['Skills Radar'] = create_radar_chart(dimensions, title="Skills Profile", light_theme=True)
-                    
-                    # Add timeline with light theme
-                    resume_text = selected_candidate.get('resume_text', '')
-                    if resume_text:
-                        timeline_events = extract_timeline_from_resume(resume_text)
-                        if timeline_events:
-                            charts['Career Timeline'] = create_career_timeline(timeline_events, selected_candidate_name, light_theme=True)
-                    
-                    # Generate PDF
-                    pdf_bytes = generate_candidate_report_pdf(selected_candidate, charts=charts)
-                    
-                    st.download_button(
-                        label="📥 Download Report",
-                        data=pdf_bytes,
-                        file_name=f"{selected_candidate_name.replace(' ', '_')}_report_{dtime.now().strftime('%Y%m%d')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-                    
-                    st.success("✅ Report generated successfully!")
-                    
-                except Exception as e:
-                    st.error(f"Error generating report: {str(e)}")
-                    st.exception(e)

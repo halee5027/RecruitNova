@@ -1,0 +1,32 @@
+John Doe
+Email: john.doe@email.com | Phone: (555) 123-4567
+
+EDUCATION
+Bachelor of Science in Computer Science
+State University, Graduated May 2023
+GPA: 3.5/4.0
+
+SKILLS
+Programming: Python, JavaScript, HTML, CSS, SQL
+Tools: Git, VS Code
+Frameworks: React (learning)
+
+INTERNSHIP EXPERIENCE
+Software Development Intern
+StartupXYZ Inc., Summer 2022 (3 months)
+• Worked on frontend development using React
+• Fixed bugs in the company website
+• Collaborated with team of 5 developers
+• Learned agile development practices
+
+PROJECTS
+Personal Portfolio Website
+• Built responsive website using HTML, CSS, JavaScript
+• Deployed on GitHub Pages
+
+Simple Todo App
+• Created using Python and Flask
+• Implemented CRUD operations
+
+CERTIFICATIONS
+Introduction to Python - Coursera, 2022

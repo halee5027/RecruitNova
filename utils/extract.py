@@ -509,9 +509,7 @@ def extract_text_from_file(file_like):
         return ''
 
 def extract_skills(text):
-   
-    def extract_skills(text: str):
-     """Return canonical skill names found in the text using SKILLS_DB."""
+    """Return canonical skill names found in the text using SKILLS_DB."""
     if not text:
         return []
 
